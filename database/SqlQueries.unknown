@@ -1,0 +1,229 @@
+create database admin_portal;
+
+use admin_portal;
+
+/*Users Table*/
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(50) NOT NULL,
+    role ENUM('reception', 'accounts', 'admin', 'super_admin') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    active TINYINT(1) DEFAULT 1
+);
+
+/*Insert into users table*/
+INSERT INTO USERS(username,password,role) values('admin','admin','admin');
+INSERT INTO USERS(username,password,role) values('superadmin','superadmin','super_admin');
+
+/*Vendors Table*/
+CREATE TABLE vendors (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    vendor_name VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(20),
+    email VARCHAR(255),
+    gst_number VARCHAR(50),
+    hsn_number VARCHAR(50),
+    date_of_supply DATE
+);
+
+/*Customers Table*/
+CREATE TABLE customers (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    customer_name VARCHAR(255) UNIQUE NOT NULL,
+    firm_name VARCHAR(255) NOT NULL,
+    firm_location VARCHAR(255) NOT NULL,
+    gst_number VARCHAR(50) NOT NULL,
+    email VARCHAR(255),
+    phone_number VARCHAR(20) NOT NULL,
+   address TEXT,
+   is_member ENUM('member','non-member') NOT NULL
+);
+
+/*Inventory Categories Table*/
+CREATE TABLE inventory_categories (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    category_name VARCHAR(255) NOT NULL
+);
+
+INSERT INTO inventory_categories (category_name) VALUES 
+('Paper'),
+('Plates'),
+('Ink');
+
+/*Inventory SubCategories Table*/
+CREATE TABLE inventory_subcategories (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    subcategory_name VARCHAR(255) NOT NULL,
+    category_id INTEGER,
+    FOREIGN KEY (category_id) REFERENCES inventory_categories(id)
+);
+
+
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES('White Paper', 1);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Maplito', 1);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Hardpaper D/D', 1);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Hardpaper D/C', 1);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Halfset', 2);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Multicolor', 3);
+INSERT INTO inventory_subcategories(subcategory_name, category_id) VALUES ('Single Color', 3);
+
+
+/*Inventory Items Table*/
+CREATE TABLE inventory_items (
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    item_name VARCHAR(255) NOT NULL,
+    subcategory_id INTEGER,
+    quantity DECIMAL(10,2) DEFAULT 0,
+    unit VARCHAR(50),
+    FOREIGN KEY (subcategory_id) REFERENCES inventory_subcategories(id)
+);
+
+INSERT INTO inventory_items (item_name, subcategory_id, quantity, unit) VALUES
+-- White Paper items
+('7.2 kg (dummy)', 1, 0, 'kg'),
+('8 kg (DFC)', 1, 0, 'kg'),
+('10.5 kg (Double Crown)', 1, 0, 'kg'),
+--Mapilo items
+('9 kg (dummy)', 2, 0, 'kg'),
+('10 kg (DFC)', 2, 0, 'kg'),
+('13.6 kg (Double Crown)', 2, 0, 'kg'),
+-- Hardpaper D/D items
+('90 GSM', 3, 0, 'GSM'),
+('130 GSM', 3, 0, 'GSM'),
+('170 GSM', 3, 0, 'GSM'),
+('250 GSM', 3, 0, 'GSM'),
+('300 GSM', 3, 0, 'GSM'),
+
+-- Hardpaper D/C items
+('90 GSM', 4, 0, 'GSM'),
+('130 GSM', 4, 0, 'GSM'),
+('170 GSM', 4, 0, 'GSM'),
+
+--Plates Halfset Items
+('700 x 945', 5, 0, 'piece'),
+('610 x 890', 5, 0, 'piece'),
+('605 x 760', 5, 0, 'piece'),
+('560 x 670', 5, 0, 'piece'),
+('335 x 485', 5, 0, 'piece'),
+
+-- Ink Multicolor items
+('Cyan', 6, 0, 'kg'),
+('Magenta', 6, 0, 'kg'),
+('Yellow', 6, 0, 'kg'),
+('Black', 6, 0, 'kg'),
+
+-- Ink Single Color items
+('Web Ink', 7, 0, 'kg'),
+('Black (Well Print)', 7, 0, 'kg'),
+('Royale Blue', 7, 0, 'kg'),
+('Green', 7, 0, 'kg'),
+('Red', 7, 0, 'kg'),
+('Brown', 7, 0, 'kg'),
+('Yellow', 7, 0, 'kg');
+
+/*Amin Inventory Table*/
+ CREATE TABLE inventory (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    vendor_id INT NOT NULL,
+    item_id INT NOT NULL,
+    quantity INT NOT NULL,
+    price_per_unit DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE RESTRICT,
+    FOREIGN KEY (item_id) REFERENCES inventory_items(id)
+);
+
+/*Sales Charges Table*/
+CREATE TABLE sales_prices (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    item_id INT NOT NULL,
+    selling_price DECIMAL(10, 2) NOT NULL,
+    quantity_per_unit INT NOT NULL,
+    unit_type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (item_id) REFERENCES inventory_items(id)
+);
+
+CREATE TABLE invoice (
+    invoice_number INT AUTO_INCREMENT PRIMARY KEY
+);
+
+CREATE TABLE inventory (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_number INT NOT NULL,
+    vendor_id INT NOT NULL,
+    item_id INT NOT NULL,
+    quantity INT NOT NULL,
+    price_per_unit DECIMAL(10,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (invoice_number) REFERENCES invoice(invoice_number) ON DELETE CASCADE,
+    FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE RESTRICT,
+    FOREIGN KEY (item_id) REFERENCES inventory_items(id)
+);
+
+CREATE TABLE customer_jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_name VARCHAR(255),
+    phone_number VARCHAR(20),
+    job_name VARCHAR(255),
+    paper_subcategory VARCHAR(255),
+    type VARCHAR(255),
+    quantity INT,
+    printing_type VARCHAR(255),
+    striking INT,
+    machine VARCHAR(50),
+    ryobi_type VARCHAR(50),
+    web_type VARCHAR(50),
+    web_size INT,
+    ctp_plate VARCHAR(50),
+    ctp_quantity INT,
+    customer_type VARCHAR(50),
+    paper_charges DECIMAL(10,2),
+    plating_charges DECIMAL(10,2),
+    lamination_charges DECIMAL(10,2),
+    pinning_charges DECIMAL(10,2),
+    binding_charges DECIMAL(10,2),
+    finishing_charges DECIMAL(10,2),
+    other_charges DECIMAL(10,2),
+    discount DECIMAL(10,2),
+    total_charges DECIMAL(10,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE job_sheets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_name VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(15) NOT NULL,
+    job_name VARCHAR(255) NOT NULL,
+    paper_subcategory INT,
+    type VARCHAR(255),
+    quantity INT,
+    striking VARCHAR(50),
+    machine VARCHAR(50),
+    ryobi_type VARCHAR(50),
+    web_type VARCHAR(50),
+    web_size INT,
+    ctp_plate VARCHAR(50),
+    ctp_quantity INT,
+    plating_charges DECIMAL(10,2),
+    paper_charges DECIMAL(10,2),
+    printing_charges DECIMAL(10,2),
+    lamination_charges DECIMAL(10,2),
+    pinning_charges DECIMAL(10,2),
+    binding_charges DECIMAL(10,2),
+    finishing_charges DECIMAL(10,2),
+    other_charges DECIMAL(10,2),
+    discount DECIMAL(10,2),
+    total_charges DECIMAL(10,2),
+    status ENUM('Draft','Approved', 'Finalized') NOT NULL DEFAULT 'Draft',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+
+
+
+
