@@ -216,6 +216,8 @@ function fetchSubcategorySubcategories() {
             <button onclick="location.href='../dashboards/super_inventory.php'">Inventory</button>
             <button onclick="location.href='../dashboards/stock_inventory.php'">Stock Inventory</button>
             <button onclick="location.href='../dashboards/paper_inventory.php'">Paper Inventory</button>
+            <button onclick="location.href='../dashboards/set_balance_limits.php'">Limitation</button>
+            <button onclick="location.href='../dashboards/reports.php'">Reports</button> <!-- New Button -->
             <button onclick="location.href='../auth/logout.php'">Logout</button>
         </div>
     </div>

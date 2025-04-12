@@ -234,6 +234,7 @@ if (isset($_GET['delete_id'])) {
             <button onclick="location.href='admin_inventory.php'">Inventory</button>
             <button onclick="location.href='sales.php'">Sales</button>
             <button onclick="location.href='printing_charges.php'">Printing Charges</button>
+            <button onclick="location.href='reports.php'">Reports</button> <!-- New Button -->
             <button onclick="location.href='../auth/logout.php'">Logout</button>
         </div>
     </div>

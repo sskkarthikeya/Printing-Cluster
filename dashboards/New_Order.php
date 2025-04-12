@@ -45,6 +45,45 @@ if ($job_id > 0 && ($mode === 'view' || $mode === 'edit')) {
     $stmt->close();
 }
 
+// Function to calculate customer's total balance
+function calculate_customer_balance($conn, $customer_name) {
+    $sql = "SELECT js.total_charges, COALESCE(SUM(pr.cash + pr.credit), 0) as total_paid
+            FROM job_sheets js
+            LEFT JOIN payment_records pr ON js.id = pr.job_sheet_id
+            WHERE js.customer_name = ? AND js.status = 'Finalized'
+            GROUP BY js.id, js.total_charges";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $customer_name);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $total_balance = 0;
+    while ($row = $result->fetch_assoc()) {
+        $balance = floatval($row['total_charges']) - floatval($row['total_paid']);
+        if ($balance > 0) {
+            $total_balance += $balance;
+        }
+    }
+    $stmt->close();
+    return $total_balance;
+}
+
+// Function to fetch customer's balance limit
+function get_customer_balance_limit($conn, $customer_name) {
+    $sql = "SELECT balance_limit FROM customers WHERE customer_name = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $customer_name);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+    $stmt->close();
+    return $row ? floatval($row['balance_limit']) : 0;
+}
+
+// Fetch balance and limit for the current customer (if set)
+$current_balance = $customer_name ? calculate_customer_balance($conn, $customer_name) : 0;
+$balance_limit = $customer_name ? get_customer_balance_limit($conn, $customer_name) : 0;
+
 $subcategories = [];
 $items = [];
 $sql = "SELECT id, subcategory_name FROM inventory_subcategories WHERE category_id=(SELECT id FROM inventory_categories WHERE category_name='Paper')";
@@ -116,12 +155,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
     $paper_subcategory = $_POST['paper'];
     $type = $_POST['type'];
     $quantity = isset($_POST['quantity']) ? (int)$_POST['quantity'] : 0;
-    $striking = $_POST['striking'];
+    $striking = $_POST['plates']; // Changed from 'striking' to 'plates' to match HTML
     $machine = $_POST['machine'];
     $ryobi_type = $_POST['ryobi_type'] ?? NULL;
     $web_type = $_POST['web_type'] ?? NULL;
     $web_size = isset($_POST['web_size']) ? (int)$_POST['web_size'] : NULL;
-    $ctp_plate = $_POST['ctp_plate'] ?? NULL;
+    $ctp_plate = $_POST['ctpPlate'] ?? NULL; // Adjusted to match radio name
     $ctp_quantity = isset($_POST['ctp_quantity']) ? (int)$_POST['ctp_quantity'] : 0;
     $plating_charges = $_POST['plating_charges'];
     $paper_charges = $_POST['paper_charges'];
@@ -138,6 +177,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
     // Debug: Log the status values
     error_log("POST status: " . (isset($_POST['status']) ? $_POST['status'] : 'Not set'));
     error_log("Status variable: " . $status);
+
+    // Calculate potential balance
+    $current_balance = calculate_customer_balance($conn, $customer_name);
+    $balance_limit = get_customer_balance_limit($conn, $customer_name);
+    $total_potential_balance = $current_balance + floatval($total_charges);
+
+    // Check balance limit before proceeding
+    if ($balance_limit > 0 && $total_potential_balance > $balance_limit) {
+        echo "<script>alert('Cannot proceed. Adding this job (₹" . number_format($total_charges, 2) . ") would exceed the balance limit for $customer_name (Current Balance: ₹" . number_format($current_balance, 2) . " + ₹" . number_format($total_charges, 2) . " > Limit: ₹" . number_format($balance_limit, 2) . "). Please clear the balance or reduce charges.'); window.location.href='New_Order.php?mode=" . ($job_id > 0 ? 'edit&id=' . $job_id : 'add') . "';</script>";
+        $stmt->close();
+        $conn->close();
+        exit;
+    }
 
     if ($job_id > 0) {
         // Update existing job sheet
@@ -177,6 +229,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
         if ($job_id == 0) {
             $job_id = $conn->insert_id;
         }
+
+        // Insert into ctp table if machine is CTP
+        if ($machine === 'CTP' && $ctp_plate && $ctp_quantity > 0) {
+            $sql_ctp = "INSERT INTO ctp (job_sheet_id, ctp_plate, ctp_quantity) VALUES (?, ?, ?)";
+            $stmt_ctp = $conn->prepare($sql_ctp);
+            $stmt_ctp->bind_param("isi", $job_id, $ctp_plate, $ctp_quantity);
+            if (!$stmt_ctp->execute()) {
+                error_log("Error inserting into ctp table: " . $stmt_ctp->error);
+            }
+            $stmt_ctp->close();
+        }
+
         error_log("Database operation successful. Status: " . $status);
         if ($status === 'Finalized') {
             error_log("Redirecting to finalize_order.php?id=$job_id");
@@ -194,7 +258,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
     }
     $stmt->close();
 }
-
 ?>
 
 <!DOCTYPE html>
@@ -492,273 +555,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
         }
     </style>
-</head>
-<body>
-    <div class="navbar">
-        <h2 class="brand">Reception Dashboard</h2>
-        <div class="nav-buttons">
-            <button onclick="location.href='New_Order.php'">New Order</button>
-            <button onclick="location.href='view_order.php'">View Order</button>
-            <button onclick="location.href='../auth/logout.php'">Logout</button>
-        </div>
-    </div>
-
-    <div class="container">
-        <h2>Customer Management</h2>
-        <h3 style="padding-left:20px;">Select Customer</h3>
-        <form method="GET" id="searchForm">
-            <input type="text" name="search_query" class="search-input" placeholder="Search Customer...">
-            <button type="submit" class="search-btn">Search</button>
-        </form>
-    </div>
-
-    <?php if ($_SERVER["REQUEST_METHOD"] == "GET" && isset($_GET['search_query'])): ?>
-    <div class="container" id="searchResults">
-        <?php
-        $search = $conn->real_escape_string($_GET['search_query']);
-        $sql = "SELECT customer_name, phone_number FROM customers WHERE customer_name LIKE ?";
-        $stmt = $conn->prepare($sql);
-        $search_param = "%$search%";
-        $stmt->bind_param("s", $search_param);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $customerJson = htmlspecialchars(json_encode([
-                    'customer_name' => $row['customer_name'],
-                    'phone_number' => $row['phone_number']
-                ]), ENT_QUOTES, 'UTF-8');
-                echo "<div class='vendor-card'>
-                    <strong class='vendor-name'>" . htmlspecialchars($row['customer_name']) . "</strong>
-                    <div class='vendor-actions'>
-                        <button class='edit-btn' onclick='selectCustomer($customerJson)'>Select</button>
-                    </div>
-                    <p>Phone: " . htmlspecialchars($row['phone_number']) . "</p>
-                </div>";
-            }
-        } else {
-            echo "<p>No customers found.</p>";
-        }
-        $stmt->close();
-        ?>
-    </div>
-    <?php endif; ?>
-
-    <form action="" method="POST" id="jobForm" class="job-sheet-form">
-        <input type="hidden" id="status" name="status" value="Draft">
-        <input type="hidden" name="job_id" value="<?= $job_id ?>">
-        <div class="container" style="width:70%">
-            <h2>Customer Details</h2>
-            <div class="customer-container" style="display:flex;justify-content:space-evenly;">
-                <div class="form-group">
-                    <label>Customer Name:</label>
-                    <input type="text" name="customer_name" id="customer_name" placeholder="Enter Customer Name" value="<?= htmlspecialchars($customer_name) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
-                </div>
-                <div class="form-group">
-                    <label>Phone Number:</label>
-                    <input type="text" name="phone_number" id="phone_number" placeholder="Enter Phone Number" value="<?= htmlspecialchars($phone_number) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
-                </div>
-                <div class="form-group">
-                    <label>Job Name:</label>
-                    <input type="text" name="job_name" placeholder="Enter Job Name" value="<?= htmlspecialchars($job_name) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
-                </div>
-            </div>
-            
-            <h2>Paper Section</h2>
-            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
-                <div class="form-group">
-                    <label>Paper (Subcategory):</label>
-                    <select name="paper" id="paper" onchange="updateTypeDropdown()" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="">Select Paper</option>
-                        <?php foreach ($subcategories as $subcategory): ?>
-                            <option value="<?= $subcategory['id'] ?>" <?= $paper_subcategory == $subcategory['id'] ? 'selected' : '' ?>>
-                                <?= htmlspecialchars($subcategory['subcategory_name']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-group" id="type-container" style="display:<?= $paper_subcategory ? 'block' : 'none' ?>;">
-                    <label>Type:</label>
-                    <select name="type" id="type" onchange="fetchSellingPrice()" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="">Select Type</option>
-                        <?php if ($paper_subcategory && isset($items[$paper_subcategory])): ?>
-                            <?php foreach ($items[$paper_subcategory] as $item): ?>
-                                <option value="<?= $item['id'] ?>" <?= $type == $item['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($item['item_name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Quantity:</label>
-                    <input type="number" id="quantity" name="quantity" min="1" value="<?= $quantity ?: 1 ?>" oninput="calculateStrikingAndUpdate()" required <?= $mode === 'view' ? 'readonly' : '' ?>>
-                </div>
-                <div class="form-group">
-                    <label>Printing Type:</label>
-                    <select id="printingType" name="striking" onchange="calculateStrikingAndUpdate()" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="select" <?= $striking == 'select' ? 'selected' : '' ?>>Select striking type</option>
-                        <option value="Customer" <?= $striking == 'Customer' ? 'selected' : '' ?>>One Side</option>
-                        <option value="Company" <?= $striking == 'Company' ? 'selected' : '' ?>>Back and Back</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Striking:</label>
-                    <input id="striking" name="plates" value="<?= $striking ?>" readonly>
-                </div>
-                <input type="hidden" id="selling_price" value="">
-            </div>
-
-            <h2>Machine Selection</h2>
-            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
-                <div class="machine-selection">
-                    <label><input type="radio" name="machine" value="DD" onchange="updateMachineOptions()" <?= $machine == 'DD' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> D/D</label>
-                    <label><input type="radio" name="machine" value="SDD" onchange="updateMachineOptions()" <?= $machine == 'SDD' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> S/D</label>
-                    <label><input type="radio" name="machine" value="DC" onchange="updateMachineOptions()" <?= $machine == 'DC' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> D/C</label>
-                    <label><input type="radio" name="machine" value="RYOBI" onchange="updateMachineOptions()" <?= $machine == 'RYOBI' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> RYOBI</label>
-                    <label><input type="radio" name="machine" value="Web" onchange="updateMachineOptions()" <?= $machine == 'Web' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> WEB</label>
-                    <label><input type="radio" name="machine" value="Digital" onchange="updateMachineOptions()" <?= $machine == 'Digital' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> Digital</label>
-                    <label><input type="radio" name="machine" value="CTP" onchange="updateMachineOptions()" <?= $machine == 'CTP' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> CTP</label>
-                    <label><input type="checkbox" name="machine" value="re-print" id="re-print" <?= $mode === 'view' ? 'disabled' : '' ?>>RePrint</label>
-                </div>
-
-                <div class="form-group" id="ryobi-options" style="display:<?= $machine == 'RYOBI' ? 'block' : 'none' ?>;">
-                    <label>RYOBI Type:</label>
-                    <select name="ryobi_type" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="">Select RYOBI Type</option>
-                        <option value="black" <?= $ryobi_type == 'black' ? 'selected' : '' ?>>Black</option>
-                        <option value="color" <?= $ryobi_type == 'color' ? 'selected' : '' ?>>Color</option>
-                    </select>
-                </div>
-
-                <div class="form-group" id="web-options" style="display:<?= $machine == 'Web' ? 'block' : 'none' ?>;">
-                    <label>Web Type:</label>
-                    <select name="web_type" id="webType" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="">Select web color</option>
-                        <option value="black" <?= $web_type == 'black' ? 'selected' : '' ?>>Black</option>
-                        <option value="color" <?= $web_type == 'color' ? 'selected' : '' ?>>Color</option>
-                    </select>
-                </div>
-
-                <div class="form-group" id="web-sub-options" style="display:<?= $machine == 'Web' ? 'block' : 'none' ?>;">
-                    <label>No of Papers:</label>
-                    <select name="web_size" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="">Select Pages</option>
-                        <option value="8" <?= $web_size == 8 ? 'selected' : '' ?>>8</option>
-                        <option value="16" <?= $web_size == 16 ? 'selected' : '' ?>>16</option>
-                    </select>
-                </div>
-
-                <div class="ctp-section" style="display:<?= $machine == 'CTP' ? 'none' : 'block' ?>;" id="ctp-section">
-                    <h3>CTP Plate Sizes</h3>
-                    <div class="plate-sizes">
-                        <label><input type="radio" name="ctpPlate" value="700x945" <?= $ctp_plate == '700x945' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 700 × 945</label>
-                        <label><input type="radio" name="ctpPlate" value="335x485" <?= $ctp_plate == '335x485' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 335 × 485</label>
-                        <label><input type="radio" name="ctpPlate" value="560x670" <?= $ctp_plate == '560x670' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 560 × 670</label>
-                        <label><input type="radio" name="ctpPlate" value="610x890" <?= $ctp_plate == '610x890' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 610 × 890</label>
-                        <label><input type="radio" name="ctpPlate" value="605x60" <?= $ctp_plate == '605x60' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 605 × 60</label>
-                    </div>
-                    <label>Enter the quantity:</label>
-                    <input type="number" id="ctpQuantity" name="ctp_quantity" placeholder="Enter Quantity" value="<?= $ctp_quantity ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                </div>
-
-                <div class="ctp-plate-selection" id="ctpPlateSection" style="display:<?= $machine == 'CTP' ? 'block' : 'none' ?>;">
-                    <h3>Select Plate Size</h3>
-                    <select id="plateSize" <?= $mode === 'view' ? 'disabled' : '' ?>>
-                        <option value="Select">Select Plate Size</option>
-                        <option value="700x945" <?= $ctp_plate == '700x945' ? 'selected' : '' ?>>700 × 945</option>
-                        <option value="335x485" <?= $ctp_plate == '335x485' ? 'selected' : '' ?>>335 × 485</option>
-                        <option value="560x670" <?= $ctp_plate == '560x670' ? 'selected' : '' ?>>560 × 670</option>
-                        <option value="610x890" <?= $ctp_plate == '610x890' ? 'selected' : '' ?>>610 × 890</option>
-                        <option value="605x60" <?= $ctp_plate == '605x60' ? 'selected' : '' ?>>605 × 60</option>
-                    </select>
-                    <input type="number" id="plateQuantity" placeholder="Quantity" value="<?= $ctp_quantity ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    <button type="button" onclick="addPlate()" class="edit-btn" style="margin-left:250px;" <?= $mode === 'view' ? 'disabled' : '' ?>>ADD</button>
-                    <div class="container" id="plateList"></div>
-                </div>
-            </div>
-            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
-                <div class="customer-selection">
-                    <label><input type="radio" name="customerType" value="Customer" onchange="updateCharges()" <?= $mode === 'view' ? 'disabled' : '' ?> checked> Customer</label>
-                    <label><input type="radio" name="customerType" value="Publication" onchange="updateCharges()" <?= $mode === 'view' ? 'disabled' : '' ?>> Publication</label>
-                </div>
-            </div>
-            <h2>Bill Details</h2>
-            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
-                <div class="container">
-                    <div class="form-group">
-                        <label>Printing Charges:</label>
-                        <input type="number" name="paper_charges" id="paper_charges" placeholder="Enter Printing Charges" value="<?= $paper_charges ?>" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label>Plating Charges:</label>
-                        <input type="number" name="plating_charges" placeholder="Enter Plating Charges" value="<?= $plating_charges ?>" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label>Lamination Charges:</label>
-                        <input type="number" name="lamination_charges" placeholder="Enter Lamination Charges" value="<?= $lamination_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                    <div class="form-group">
-                        <label>Pinning Charges:</label>
-                        <input type="number" name="pinning_charges" placeholder="Enter Pinning Charges" value="<?= $pinning_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                </div>
-                <div class="container">
-                    <div class="form-group">
-                        <label>Binding Charges:</label>
-                        <input type="number" name="binding_charges" placeholder="Enter Binding Charges" value="<?= $binding_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                    <div class="form-group">
-                        <label>Finishing Charges:</label>
-                        <input type="number" name="finishing_charges" placeholder="Enter Finishing Charges" value="<?= $finishing_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                    <div class="form-group">
-                        <label>Other Charges:</label>
-                        <input type="number" name="other_charges" placeholder="Enter Other Charges" value="<?= $other_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                    <div class="form-group">
-                        <label>Discount:</label>
-                        <input type="number" name="discount" placeholder="Enter Discount" value="<?= $discount ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
-                    </div>
-                </div>
-            </div>
-
-            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-evenly;">
-                <div class="form-group">
-                    <label>Paper Charges:</label>
-                    <input type="number" name="printing_charges" id="printing_charges" placeholder="Enter Paper Charges" value="<?= $printing_charges ?>" readonly>
-                </div>
-                <div class="form-group">
-                    <label>Total Charges:</label>
-                    <input type="number" name="total_charges" placeholder="Total Charges" value="<?= $total_charges ?>" readonly>
-                </div>
-            </div>
-
-            <?php if ($mode !== 'view'): ?>
-            <div class="customer-container" style="display:flex;justify-content:space-between;">
-                <button type="submit" class="job-sheet-btn" onclick="setStatus('Draft')">Save</button>
-                <button type="button" class="job-sheet-btn" onclick="confirmFinalize()">Finalize</button>
-            </div>
-            <?php endif; ?>
-        </div>
-    </form>
-
-    <!-- Custom dialog for finalize -->
-    <div id="finalizeDialog" class="dialog-overlay">
-        <div class="dialog-box">
-            <p>Are you sure you want to finalize this job sheet?</p>
-            <button class="yes-btn" id="finalizeYesBtn">Yes</button>
-            <button class="no-btn" id="finalizeNoBtn">No</button>
-        </div>
-    </div>
-
     <script>
         var itemsData = <?= json_encode($items) ?>;
         var mode = '<?= $mode ?>';
+        var currentBalance = <?= $current_balance ?>;
+        var balanceLimit = <?= $balance_limit ?>;
 
         function selectCustomer(customer) {
             if (mode !== 'view' && mode !== 'edit') {
+                console.log('Selecting customer:', customer.customer_name);
+                console.log('Balance:', customer.balance, 'Limit:', customer.limit);
+
+                // Check total balance against the set balance limit for this customer
+                if (customer.limit > 0 && customer.balance >= customer.limit) {
+                    alert('Cannot select ' + customer.customer_name + ' (Current balance: ₹' + customer.balance.toFixed(2) + ' has reached or exceeded the limit: ₹' + customer.limit.toFixed(2) + '). Please clear the balance.');
+                    return; // Exit function, preventing form population
+                }
+                // If within limit, proceed with selection
                 document.getElementById("customer_name").value = customer.customer_name;
                 document.getElementById("phone_number").value = customer.phone_number;
                 fetchCustomerType(customer.customer_name);
@@ -838,7 +651,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
         function calculateStriking() {
             let quantity = parseFloat(document.getElementById("quantity").value) || 0;
             let printingType = document.getElementById("printingType").value;
-            let strikingField = document.getElementById("striking");
+            let strikingField = document.getElementById("plates"); // Changed to match HTML
 
             if (quantity <= 0) {
                 strikingField.value = 0;
@@ -897,7 +710,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
             if (mode === 'view') return;
             calculateStriking();
             let isMember = window.customerType || "<?php echo $customer_type; ?>";
-            let striking = parseFloat(document.getElementById("striking").value) || 0;
+            let striking = parseFloat(document.getElementById("plates").value) || 0; // Changed to match HTML
             let selectedMachine = document.querySelector('input[name="machine"]:checked');
 
             if (!selectedMachine) {
@@ -947,9 +760,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
             let laminationCharges = parseFloat(document.getElementsByName("lamination_charges")[0].value) || 0;
             let pinningCharges = parseFloat(document.getElementsByName("pinning_charges")[0].value) || 0;
             let bindingCharges = parseFloat(document.getElementsByName("binding_charges")[0].value) || 0;
-           
-
- let finishingCharges = parseFloat(document.getElementsByName("finishing_charges")[0].value) || 0;
+            let finishingCharges = parseFloat(document.getElementsByName("finishing_charges")[0].value) || 0;
             let otherCharges = parseFloat(document.getElementsByName("other_charges")[0].value) || 0;
             let discount = parseFloat(document.getElementsByName("discount")[0].value) || 0;
 
@@ -961,7 +772,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
 
         document.addEventListener("DOMContentLoaded", function () {
             if (mode === 'edit' || mode === 'add') {
-                document.getElementById("striking").addEventListener("input", function() {
+                document.getElementById("plates").addEventListener("input", function() { // Changed to match HTML
                     updateCharges();
                 });
                 document.getElementById("customer_name").addEventListener("change", function() {
@@ -1043,6 +854,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
             document.getElementById("status").value = status;
         }
 
+        function checkBalance(customerName, totalCharges) {
+            let currentBalance = <?= $current_balance ?>;
+            let balanceLimit = <?= $balance_limit ?>;
+            let totalPotentialBalance = currentBalance + parseFloat(totalCharges);
+
+            // Only enforce limit if balance_limit is explicitly set (> 0)
+            if (balanceLimit > 0 && totalPotentialBalance > balanceLimit) {
+                alert('Balance limit exceeded for ' + customerName + ' (₹' + totalPotentialBalance.toFixed(2) + ' exceeds set limit of ₹' + balanceLimit.toFixed(2) + '). Please clear the overdue balance before finalizing.');
+                return false; // Prevent submission
+            }
+            return true; // Allow submission if no limit or within limit
+        }
+
         function confirmFinalize() {
             let dialog = document.getElementById('finalizeDialog');
             dialog.style.display = 'flex';
@@ -1050,15 +874,298 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && !isset($_POST['subcategory_id']) && 
             document.getElementById('finalizeYesBtn').onclick = function() {
                 dialog.style.display = 'none';
                 document.getElementById("status").value = 'Finalized';
-                console.log("Form status set to: " + document.getElementById("status").value);
-                console.log("Submitting form...");
-                document.getElementById("jobForm").submit();
+                let totalCharges = document.getElementById("total_charges").value || 0;
+                let customerName = document.getElementById("customer_name").value;
+
+                if (checkBalance(customerName, totalCharges)) {
+                    document.getElementById("jobForm").submit();
+                }
             };
 
             document.getElementById('finalizeNoBtn').onclick = function() {
                 dialog.style.display = 'none';
             };
         }
+
+        // Prevent form submission if balance limit is exceeded (for Save button)
+        document.getElementById('jobForm').addEventListener('submit', function(event) {
+            if (mode !== 'view') {
+                let totalCharges = document.getElementById("total_charges").value || 0;
+                let customerName = document.getElementById("customer_name").value;
+                if (!checkBalance(customerName, totalCharges)) {
+                    event.preventDefault(); // Stop form submission
+                }
+            }
+        });
     </script>
+</head>
+<body>
+    <div class="navbar">
+        <h2 class="brand">Reception Dashboard</h2>
+        <div class="nav-buttons">
+            <button onclick="location.href='New_Order.php'">New Order</button>
+            <button onclick="location.href='view_order.php'">View Order</button>
+            <button onclick="location.href='../auth/logout.php'">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Customer Management</h2>
+        <h3 style="padding-left:20px;">Select Customer</h3>
+        <form method="GET" id="searchForm">
+            <input type="text" name="search_query" class="search-input" placeholder="Search Customer...">
+            <button type="submit" class="search-btn">Search</button>
+        </form>
+    </div>
+
+    <?php if ($_SERVER["REQUEST_METHOD"] == "GET" && isset($_GET['search_query'])): ?>
+    <div class="container" id="searchResults">
+        <?php
+        $search = $conn->real_escape_string($_GET['search_query']);
+        $sql = "SELECT customer_name, phone_number FROM customers WHERE customer_name LIKE ?";
+        $stmt = $conn->prepare($sql);
+        $search_param = "%$search%";
+        $stmt->bind_param("s", $search_param);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        if ($result->num_rows > 0) {
+            while ($row = $result->fetch_assoc()) {
+                $customer_balance = calculate_customer_balance($conn, $row['customer_name']);
+                $customer_limit = get_customer_balance_limit($conn, $row['customer_name']);
+                $customerJson = htmlspecialchars(json_encode([
+                    'customer_name' => $row['customer_name'],
+                    'phone_number' => $row['phone_number'],
+                    'balance' => $customer_balance,
+                    'limit' => $customer_limit
+                ]), ENT_QUOTES, 'UTF-8');
+                echo "<div class='vendor-card'>
+                    <strong class='vendor-name'>" . htmlspecialchars($row['customer_name']) . "</strong>
+                    <div class='vendor-actions'>
+                        <button class='edit-btn' onclick='selectCustomer($customerJson)'>Select</button>
+                    </div>
+                    <p>Phone: " . htmlspecialchars($row['phone_number']) . "</p>
+                    <p>Balance: ₹" . number_format($customer_balance, 2) . " | Limit: ₹" . number_format($customer_limit, 2) . "</p>
+                </div>";
+            }
+        } else {
+            echo "<p>No customers found.</p>";
+        }
+        $stmt->close();
+        ?>
+    </div>
+    <?php endif; ?>
+
+    <form action="" method="POST" id="jobForm" class="job-sheet-form">
+        <input type="hidden" id="status" name="status" value="Draft">
+        <input type="hidden" name="job_id" value="<?= $job_id ?>">
+        <div class="container" style="width:70%">
+            <h2>Customer Details</h2>
+            <div class="customer-container" style="display:flex;justify-content:space-evenly;">
+                <div class="form-group">
+                    <label>Customer Name:</label>
+                    <input type="text" name="customer_name" id="customer_name" placeholder="Enter Customer Name" value="<?= htmlspecialchars($customer_name) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
+                </div>
+                <div class="form-group">
+                    <label>Phone Number:</label>
+                    <input type="text" name="phone_number" id="phone_number" placeholder="Enter Phone Number" value="<?= htmlspecialchars($phone_number) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
+                </div>
+                <div class="form-group">
+                    <label>Job Name:</label>
+                    <input type="text" name="job_name" placeholder="Enter Job Name" value="<?= htmlspecialchars($job_name) ?>" required <?= $mode === 'view' ? 'readonly' : '' ?>>
+                </div>
+            </div>
+            
+            <h2>Paper Section</h2>
+            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
+                <div class="form-group">
+                    <label>Paper (Subcategory):</label>
+                    <select name="paper" id="paper" onchange="updateTypeDropdown()" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="">Select Paper</option>
+                        <?php foreach ($subcategories as $subcategory): ?>
+                            <option value="<?= $subcategory['id'] ?>" <?= $paper_subcategory == $subcategory['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($subcategory['subcategory_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group" id="type-container" style="display:<?= $paper_subcategory ? 'block' : 'none' ?>;">
+                    <label>Type:</label>
+                    <select name="type" id="type" onchange="fetchSellingPrice()" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="">Select Type</option>
+                        <?php if ($paper_subcategory && isset($items[$paper_subcategory])): ?>
+                            <?php foreach ($items[$paper_subcategory] as $item): ?>
+                                <option value="<?= $item['id'] ?>" <?= $type == $item['id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($item['item_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Quantity:</label>
+                    <input type="number" id="quantity" name="quantity" min="1" value="<?= $quantity ?: 1 ?>" oninput="calculateStrikingAndUpdate()" required <?= $mode === 'view' ? 'readonly' : '' ?>>
+                </div>
+                <div class="form-group">
+                    <label>Printing Type:</label>
+                    <select id="printingType" name="plates" onchange="calculateStrikingAndUpdate()" <?= $mode === 'view' ? 'disabled' : '' ?>> <!-- Changed to 'plates' -->
+                        <option value="select" <?= $striking == 'select' ? 'selected' : '' ?>>Select striking type</option>
+                        <option value="Customer" <?= $striking == 'Customer' ? 'selected' : '' ?>>One Side</option>
+                        <option value="Company" <?= $striking == 'Company' ? 'selected' : '' ?>>Back and Back</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Striking:</label>
+                    <input id="plates" name="plates" value="<?= $striking ?>" readonly> <!-- Changed to 'plates' -->
+                </div>
+                <input type="hidden" id="selling_price" value="">
+            </div>
+
+            <h2>Machine Selection</h2>
+            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
+                <div class="machine-selection">
+                    <label><input type="radio" name="machine" value="DD" onchange="updateMachineOptions()" <?= $machine == 'DD' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> D/D</label>
+                    <label><input type="radio" name="machine" value="SDD" onchange="updateMachineOptions()" <?= $machine == 'SDD' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> S/D</label>
+                    <label><input type="radio" name="machine" value="DC" onchange="updateMachineOptions()" <?= $machine == 'DC' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> D/C</label>
+                    <label><input type="radio" name="machine" value="RYOBI" onchange="updateMachineOptions()" <?= $machine == 'RYOBI' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> RYOBI</label>
+                    <label><input type="radio" name="machine" value="Web" onchange="updateMachineOptions()" <?= $machine == 'Web' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> WEB</label>
+                    <label><input type="radio" name="machine" value="Digital" onchange="updateMachineOptions()" <?= $machine == 'Digital' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> Digital</label>
+                    <label><input type="radio" name="machine" value="CTP" onchange="updateMachineOptions()" <?= $machine == 'CTP' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> CTP</label>
+                    <label><input type="checkbox" name="machine" value="re-print" id="re-print" <?= $mode === 'view' ? 'disabled' : '' ?>>RePrint</label>
+                </div>
+
+                <div class="form-group" id="ryobi-options" style="display:<?= $machine == 'RYOBI' ? 'block' : 'none' ?>;">
+                    <label>RYOBI Type:</label>
+                    <select name="ryobi_type" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="">Select RYOBI Type</option>
+                        <option value="black" <?= $ryobi_type == 'black' ? 'selected' : '' ?>>Black</option>
+                        <option value="color" <?= $ryobi_type == 'color' ? 'selected' : '' ?>>Color</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="web-options" style="display:<?= $machine == 'Web' ? 'block' : 'none' ?>;">
+                    <label>Web Type:</label>
+                    <select name="web_type" id="webType" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="">Select web color</option>
+                        <option value="black" <?= $web_type == 'black' ? 'selected' : '' ?>>Black</option>
+                        <option value="color" <?= $web_type == 'color' ? 'selected' : '' ?>>Color</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="web-sub-options" style="display:<?= $machine == 'Web' ? 'block' : 'none' ?>;">
+                    <label>No of Papers:</label>
+                    <select name="web_size" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="">Select Pages</option>
+                        <option value="8" <?= $web_size == 8 ? 'selected' : '' ?>>8</option>
+                        <option value="16" <?= $web_size == 16 ? 'selected' : '' ?>>16</option>
+                    </select>
+                </div>
+
+                <div class="ctp-section" style="display:<?= $machine == 'CTP' ? 'none' : 'block' ?>;" id="ctp-section">
+                    <h3>CTP Plate Sizes</h3>
+                    <div class="plate-sizes">
+                        <label><input type="radio" name="ctpPlate" value="700x945" <?= $ctp_plate == '700x945' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 700 × 945</label>
+                        <label><input type="radio" name="ctpPlate" value="335x485" <?= $ctp_plate == '335x485' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 335 × 485</label>
+                        <label><input type="radio" name="ctpPlate" value="560x670" <?= $ctp_plate == '560x670' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 560 × 670</label>
+                        <label><input type="radio" name="ctpPlate" value="610x890" <?= $ctp_plate == '610x890' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 610 × 890</label>
+                        <label><input type="radio" name="ctpPlate" value="605x760" <?= $ctp_plate == '605x760' ? 'checked' : '' ?> <?= $mode === 'view' ? 'disabled' : '' ?>> 605 × 760</label>
+                    </div>
+                    <label>Enter the quantity:</label>
+                    <input type="number" id="ctpQuantity" name="ctp_quantity" placeholder="Enter Quantity" value="<?= $ctp_quantity ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                </div>
+
+                <div class="ctp-plate-selection" id="ctpPlateSection" style="display:<?= $machine == 'CTP' ? 'block' : 'none' ?>;">
+                    <h3>Select Plate Size</h3>
+                    <select id="plateSize" <?= $mode === 'view' ? 'disabled' : '' ?>>
+                        <option value="Select">Select Plate Size</option>
+                        <option value="700x945" <?= $ctp_plate == '700x945' ? 'selected' : '' ?>>700 × 945</option>
+                        <option value="335x485" <?= $ctp_plate == '335x485' ? 'selected' : '' ?>>335 × 485</option>
+                        <option value="560x670" <?= $ctp_plate == '560x670' ? 'selected' : '' ?>>560 × 670</option>
+                        <option value="610x890" <?= $ctp_plate == '610x890' ? 'selected' : '' ?>>610 × 890</option>
+                        <option value="605x760" <?= $ctp_plate == '605x760' ? 'selected' : '' ?>>605 ×760</option>
+                    </select>
+                    <input type="number" id="plateQuantity" placeholder="Quantity" value="<?= $ctp_quantity ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    <button type="button" onclick="addPlate()" class="edit-btn" style="margin-left:250px;" <?= $mode === 'view' ? 'disabled' : '' ?>>ADD</button>
+                    <div class="container" id="plateList"></div>
+                </div>
+            </div>
+            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
+                <div class="customer-selection">
+                    <label><input type="radio" name="customerType" value="Customer" onchange="updateCharges()" <?= $mode === 'view' ? 'disabled' : '' ?> checked> Customer</label>
+                    <label><input type="radio" name="customerType" value="Publication" onchange="updateCharges()" <?= $mode === 'view' ? 'disabled' : '' ?>> Publication</label>
+                </div>
+            </div>
+            <h2>Bill Details</h2>
+            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-between;">
+                <div class="container">
+                    <div class="form-group">
+                        <label>Printing Charges:</label>
+                        <input type="number" name="paper_charges" id="paper_charges" placeholder="Enter Printing Charges" value="<?= $paper_charges ?>" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Plating Charges:</label>
+                        <input type="number" name="plating_charges" placeholder="Enter Plating Charges" value="<?= $plating_charges ?>" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Lamination Charges:</label>
+                        <input type="number" name="lamination_charges" placeholder="Enter Lamination Charges" value="<?= $lamination_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                    <div class="form-group">
+                        <label>Pinning Charges:</label>
+                        <input type="number" name="pinning_charges" placeholder="Enter Pinning Charges" value="<?= $pinning_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                </div>
+                <div class="container">
+                    <div class="form-group">
+                        <label>Binding Charges:</label>
+                        <input type="number" name="binding_charges" placeholder="Enter Binding Charges" value="<?= $binding_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                    <div class="form-group">
+                        <label>Finishing Charges:</label>
+                        <input type="number" name="finishing_charges" placeholder="Enter Finishing Charges" value="<?= $finishing_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                    <div class="form-group">
+                        <label>Other Charges:</label>
+                        <input type="number" name="other_charges" placeholder="Enter Other Charges" value="<?= $other_charges ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                    <div class="form-group">
+                        <label>Discount:</label>
+                        <input type="number" name="discount" placeholder="Enter Discount" value="<?= $discount ?>" <?= $mode === 'view' ? 'readonly' : '' ?>>
+                    </div>
+                </div>
+            </div>
+
+            <div class="customer-container" style="display:flex;gap:20px;justify-content:space-evenly;">
+                <div class="form-group">
+                    <label>Paper Charges:</label>
+                    <input type="number" name="printing_charges" id="printing_charges" placeholder="Enter Paper Charges" value="<?= $printing_charges ?>" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Total Charges:</label>
+                    <input type="number" name="total_charges" id="total_charges" placeholder="Total Charges" value="<?= $total_charges ?>" readonly>
+                </div>
+            </div>
+
+            <?php if ($mode !== 'view'): ?>
+            <div class="customer-container" style="display:flex;justify-content:space-between;">
+                <button type="submit" class="job-sheet-btn" onclick="setStatus('Draft')">Save</button>
+                <button type="button" class="job-sheet-btn" onclick="confirmFinalize()">Finalize</button>
+            </div>
+            <?php endif; ?>
+        </div>
+    </form>
+
+    <!-- Custom dialog for finalize -->
+    <div id="finalizeDialog" class="dialog-overlay">
+        <div class="dialog-box">
+            <p>Are you sure you want to finalize this job sheet?</p>
+            <button class="yes-btn" id="finalizeYesBtn">Yes</button>
+            <button class="no-btn" id="finalizeNoBtn">No</button>
+        </div>
+    </div>
+
+    <?php
+    $conn->close();
+    ?>
 </body>
 </html>

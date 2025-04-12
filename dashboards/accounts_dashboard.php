@@ -56,9 +56,11 @@ $sql_count = "SELECT COUNT(DISTINCT js.id) as total
               LEFT JOIN payment_records pr ON js.id = pr.job_sheet_id 
               WHERE js.completed_delivery = 1";
 if ($filter === 'partially_paid') {
-    $sql_count .= " AND (js.payment_status IS NULL OR js.payment_status IN ('incomplete', 'partially_paid', 'uncredit'))";
+    $sql_count .= " AND js.payment_status IN ('partially_paid', 'uncredit')";
 } elseif ($filter === 'fully_paid') {
     $sql_count .= " AND js.payment_status = 'completed'";
+} elseif ($filter === 'not_paid') {
+    $sql_count .= " AND (js.payment_status IS NULL OR js.payment_status = 'incomplete')";
 }
 if (!empty($search)) {
     $search = $conn->real_escape_string($search);
@@ -81,9 +83,11 @@ $sql = "SELECT js.*
         LEFT JOIN payment_records pr ON js.id = pr.job_sheet_id 
         WHERE js.completed_delivery = 1";
 if ($filter === 'partially_paid') {
-    $sql .= " AND (js.payment_status IS NULL OR js.payment_status IN ('incomplete', 'partially_paid', 'uncredit'))";
+    $sql .= " AND js.payment_status IN ('partially_paid', 'uncredit')";
 } elseif ($filter === 'fully_paid') {
     $sql .= " AND js.payment_status = 'completed'";
+} elseif ($filter === 'not_paid') {
+    $sql .= " AND (js.payment_status IS NULL OR js.payment_status = 'incomplete')";
 }
 if (!empty($search)) {
     $sql .= " AND (js.customer_name LIKE '%$search%' OR js.id LIKE '%$search%')";
@@ -111,7 +115,7 @@ if ($generate_qr === 1 && !empty($search) && $filter === 'partially_paid' && !is
                FROM job_sheets js
                LEFT JOIN payment_records pr ON js.id = pr.job_sheet_id
                WHERE js.completed_delivery = 1
-               AND (js.payment_status IS NULL OR js.payment_status IN ('incomplete', 'partially_paid', 'uncredit'))
+               AND js.payment_status IN ('partially_paid', 'uncredit')
                AND js.customer_name LIKE ?
                GROUP BY js.id, js.job_name, js.customer_name, js.description, js.total_charges";
     $stmt = $conn->prepare($sql_qr);
@@ -181,7 +185,6 @@ if ($generate_qr === 1 && !empty($search) && $filter === 'partially_paid' && !is
     <link rel="stylesheet" href="../css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* Existing styles preserved */
         table { 
             width: 90%; 
             margin: 20px auto; 
@@ -497,179 +500,181 @@ if ($generate_qr === 1 && !empty($search) && $filter === 'partially_paid' && !is
     </script>
 </head>
 <body>
-    <div class="navbar">
-        <h2 class="brand">Accounts Dashboard</h2>
-        <div class="nav-buttons">
-            <button onclick="location.href='../auth/logout.php'">Logout</button>
-        </div>
+<div class="navbar">
+    <h2 class="brand">Accounts Dashboard</h2>
+    <div class="nav-buttons">
+        <button onclick="location.href='reports.php'">Reports</button>
+        <button onclick="location.href='../auth/logout.php'">Logout</button>
     </div>
+</div>
 
-    <div class="main-container">
-        <div class="user-container">
-            <h2>Orders</h2>
+<div class="main-container">
+    <div class="user-container">
+        <h2>Orders</h2>
 
-            <!-- Filter and Search Section -->
-            <div class="filter-container">
-                <div>
-                    <label for="paymentFilter">Filter by Payment Status: </label>
-                    <select id="paymentFilter" onchange="applyFilter()">
-                        <option value="all" <?= $filter === 'all' ? 'selected' : '' ?>>All Orders</option>
-                        <option value="partially_paid" <?= $filter === 'partially_paid' ? 'selected' : '' ?>>Partially Paid (Including Pending)</option>
-                        <option value="fully_paid" <?= $filter === 'fully_paid' ? 'selected' : '' ?>>Fully Paid</option>
-                    </select>
-                </div>
-
-                <div class="search-container">
-                    <input type="text" id="searchInput" name="search" placeholder="Search by Customer Name or Job Sheet ID" value="<?= htmlspecialchars($search) ?>">
-                    <button id="clearBtn" class="clear-btn" style="display: none;">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-
-                <div class="date-container">
-                    <label for="fromDate">From: </label>
-                    <input type="date" id="fromDate" value="<?= htmlspecialchars($from_date) ?>">
-                    <label for="toDate">To: </label>
-                    <input type="date" id="toDate" value="<?= htmlspecialchars($to_date) ?>">
-                </div>
-
-                <div>
-                    <button class="print-page-btn" onclick="window.open('print_page.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page ?>', '_blank')">Print Page</button>
-                    <?php if (!empty($search) && $filter === 'partially_paid' && !is_numeric($search)): ?>
-                        <button class="generate-qr-btn" onclick="window.location.href='accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page ?>&generate_qr=1'">Generate QR</button>
-                    <?php endif; ?>
-                </div>
+        <!-- Filter and Search Section -->
+        <div class="filter-container">
+            <div>
+                <label for="paymentFilter">Filter by Payment Status: </label>
+                <select id="paymentFilter" onchange="applyFilter()">
+                    <option value="all" <?= $filter === 'all' ? 'selected' : '' ?>>All Orders</option>
+                    <option value="partially_paid" <?= $filter === 'partially_paid' ? 'selected' : '' ?>>Partially Paid</option>
+                    <option value="not_paid" <?= $filter === 'not_paid' ? 'selected' : '' ?>>Not Paid</option>
+                    <option value="fully_paid" <?= $filter === 'fully_paid' ? 'selected' : '' ?>>Fully Paid</option>
+                </select>
             </div>
 
-            <?php if ($result && $result->num_rows > 0): ?>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Customer Name</th>
-                            <th>Job Name</th>
-                            <th>Total Charges (Excl. Paper)</th>
-                            <th>File</th>
-                            <th>Description</th>
-                            <th>Payment Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php while ($row = $result->fetch_assoc()): ?>
-                            <tr>
-                                <td><?= $row['id'] ?></td>
-                                <td><?= htmlspecialchars($row['customer_name']) ?></td>
-                                <td><?= htmlspecialchars($row['job_name']) ?></td>
-                                <td>₹<?= number_format($row['total_charges'], 2) ?></td>
-                                <td>
-                                    <?php 
-                                    $db_files = $row['file_path'] ? explode(',', $row['file_path']) : [];
-                                    if (!empty($db_files)): ?>
-                                        <?php foreach ($db_files as $index => $file): ?>
-                                            <a href="accounts_dashboard.php?download_file=<?= urlencode($file) ?>&job_id=<?= $row['id'] ?>" class="download-link">Download <?= $index + 1 ?></a>
-                                        <?php endforeach; ?>
-                                    <?php else: ?>
-                                        No file
-                                    <?php endif; ?>
-                                </td>
-                                <td><?= htmlspecialchars($row['description'] ?? 'No description') ?></td>
-                                <td style="color: <?= $row['payment_status'] === 'incomplete' || $row['payment_status'] === NULL ? 'red' : ($row['payment_status'] === 'partially_paid' ? 'orange' : ($row['payment_status'] === 'uncredit' ? '#ff4500' : 'green')); ?>; font-weight: bold;">
-                                    <?php
-                                    if ($row['payment_status'] === 'completed') {
-                                        echo 'Fully Paid';
-                                    } elseif ($row['payment_status'] === 'partially_paid') {
-                                        echo 'Partially Paid';
-                                    } elseif ($row['payment_status'] === 'uncredit') {
-                                        echo 'Partially Paid';
-                                    } else {
-                                        echo 'Pending';
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <div class="dropdown">
-                                        <button class="dropdown-btn">
-                                            <i class="fas fa-ellipsis-v"></i> Actions
-                                        </button>
-                                        <div class="dropdown-content">
-                                            <a href="accounts_view_order.php?id=<?= $row['id'] ?>" class="view">
-                                                <i class="fas fa-eye"></i> View
-                                            </a>
-                                            <a href="payment_statement.php?job_id=<?= $row['id'] ?>" class="statement">
-                                                <i class="fas fa-file-invoice"></i> Statement
-                                            </a>
-                                            <a href="print_account_job_sheet.php?id=<?= $row['id'] ?>&paper_charges=without" target="_blank" class="print1">
-                                                <i class="fas fa-print"></i> Print 1
-                                            </a>
-                                            <a href="print_account_job_sheet.php?id=<?= $row['id'] ?>&paper_charges=with" target="_blank" class="print2">
-                                                <i class="fas fa-print"></i> Print 2
-                                            </a>
-                                        </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    </tbody>
-                </table>
+            <div class="search-container">
+                <input type="text" id="searchInput" name="search" placeholder="Search by Customer Name or Job Sheet ID" value="<?= htmlspecialchars($search) ?>">
+                <button id="clearBtn" class="clear-btn" style="display: none;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
 
-                <!-- Pagination Links -->
-                <div class="pagination">
-                    <?php if ($page > 1): ?>
-                        <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page - 1 ?>">« Previous</a>
-                    <?php endif; ?>
-                    <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                        <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $i ?>" class="<?= $i === $page ? 'active' : '' ?>"><?= $i ?></a>
-                    <?php endfor; ?>
-                    <?php if ($page < $total_pages): ?>
-                        <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page + 1 ?>">Next »</a>
-                    <?php endif; ?>
-                </div>
-            <?php else: ?>
-                <p>No orders found for the selected filter or search criteria.</p>
-            <?php endif; ?>
+            <div class="date-container">
+                <label for="fromDate">From: </label>
+                <input type="date" id="fromDate" value="<?= htmlspecialchars($from_date) ?>">
+                <label for="toDate">To: </label>
+                <input type="date" id="toDate" value="<?= htmlspecialchars($to_date) ?>">
+            </div>
 
-            <!-- QR and Payment Summary Section (only shown after clicking Generate QR) -->
-            <?php if ($show_qr_section): ?>
-                <div class="qr-section" id="qrSection">
-                    <h2>Payment Summary for <?= htmlspecialchars($search) ?></h2>
-                    <table>
-                        <tr>
-                            <th>Job ID</th>
-                            <th>Job Name</th>
-                            <th>Customer Name</th>
-                            <th>Description</th>
-                            <th>Total Charges</th>
-                            <th>Balance</th>
-                        </tr>
-                        <?php foreach ($job_sheets as $sheet): ?>
-                            <tr>
-                                <td><?= $sheet['id'] ?></td>
-                                <td><?= htmlspecialchars($sheet['job_name']) ?></td>
-                                <td><?= htmlspecialchars($sheet['customer_name']) ?></td>
-                                <td><?= htmlspecialchars($sheet['description']) ?></td>
-                                <td>₹<?= number_format($sheet['total_charges'], 2) ?></td>
-                                <td>₹<?= number_format($sheet['balance'], 2) ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                        <tr>
-                            <td colspan="5"><strong>Total Balance</strong></td>
-                            <td><strong>₹<?= number_format($total_balance, 2) ?></strong></td>
-                        </tr>
-                    </table>
-                    <div class="payment-info">
-                        <p>Pay Total Balance (₹<?= number_format($total_balance, 2) ?>) via UPI: <?= htmlspecialchars($upi_id) ?></p>
-                    </div>
-                    <div class="qr-code">
-                        <img src="<?= htmlspecialchars($qr_path) ?>" alt="QR Code for Payment" onerror="this.style.display='none'; this.nextSibling.style.display='block';">
-                        <p style="display: none; color: red;">Failed to load QR code image.</p>
-                    </div>
-                    <div style="text-align: center;">
-                        <button class="print-page-btn" onclick="window.open('print_payment_summary.php?search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>', '_blank')">Print Payment Summary</button>
-                    </div>
-                </div>
-            <?php endif; ?>
+            <div>
+                <button class="print-page-btn" onclick="window.open('print_page.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page ?>', '_blank')">Print Page</button>
+                <?php if (!empty($search) && $filter === 'partially_paid' && !is_numeric($search)): ?>
+                    <button class="generate-qr-btn" onclick="window.location.href='accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page ?>&generate_qr=1'">Generate QR</button>
+                <?php endif; ?>
+            </div>
         </div>
+
+        <?php if ($result && $result->num_rows > 0): ?>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Customer Name</th>
+                        <th>Job Name</th>
+                        <th>Total Charges (Excl. Paper)</th>
+                        <th>File</th>
+                        <th>Description</th>
+                        <th>Payment Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php while ($row = $result->fetch_assoc()): ?>
+                        <tr>
+                            <td><?= $row['id'] ?></td>
+                            <td><?= htmlspecialchars($row['customer_name']) ?></td>
+                            <td><?= htmlspecialchars($row['job_name']) ?></td>
+                            <td>₹<?= number_format($row['total_charges'], 2) ?></td>
+                            <td>
+                                <?php 
+                                $db_files = $row['file_path'] ? explode(',', $row['file_path']) : [];
+                                if (!empty($db_files)): ?>
+                                    <?php foreach ($db_files as $index => $file): ?>
+                                        <a href="accounts_dashboard.php?download_file=<?= urlencode($file) ?>&job_id=<?= $row['id'] ?>" class="download-link">Download <?= $index + 1 ?></a>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    No file
+                                <?php endif; ?>
+                            </td>
+                            <td><?= htmlspecialchars($row['description'] ?? 'No description') ?></td>
+                            <td style="color: <?= $row['payment_status'] === 'incomplete' || $row['payment_status'] === NULL ? 'red' : ($row['payment_status'] === 'partially_paid' ? 'orange' : ($row['payment_status'] === 'uncredit' ? '#ff4500' : 'green')); ?>; font-weight: bold;">
+                                <?php
+                                if ($row['payment_status'] === 'completed') {
+                                    echo 'Fully Paid';
+                                } elseif ($row['payment_status'] === 'partially_paid') {
+                                    echo 'Partially Paid';
+                                } elseif ($row['payment_status'] === 'uncredit') {
+                                    echo 'Partially Paid';
+                                } else {
+                                    echo 'Pending';
+                                }
+                                ?>
+                            </td>
+                            <td>
+                                <div class="dropdown">
+                                    <button class="dropdown-btn">
+                                        <i class="fas fa-ellipsis-v"></i> Actions
+                                    </button>
+                                    <div class="dropdown-content">
+                                        <a href="accounts_view_order.php?id=<?= $row['id'] ?>" class="view">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                        <a href="payment_statement.php?job_id=<?= $row['id'] ?>" class="statement">
+                                            <i class="fas fa-file-invoice"></i> Statement
+                                        </a>
+                                        <a href="print_account_job_sheet.php?id=<?= $row['id'] ?>&paper_charges=without" target="_blank" class="print1">
+                                            <i class="fas fa-print"></i> Print 1
+                                        </a>
+                                        <a href="print_account_job_sheet.php?id=<?= $row['id'] ?>&paper_charges=with" target="_blank" class="print2">
+                                            <i class="fas fa-print"></i> Print 2
+                                        </a>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
+
+            <!-- Pagination Links -->
+            <div class="pagination">
+                <?php if ($page > 1): ?>
+                    <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page - 1 ?>">« Previous</a>
+                <?php endif; ?>
+                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                    <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $i ?>" class="<?= $i === $page ? 'active' : '' ?>"><?= $i ?></a>
+                <?php endfor; ?>
+                <?php if ($page < $total_pages): ?>
+                    <a href="accounts_dashboard.php?filter=<?= urlencode($filter) ?>&search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>&page=<?= $page + 1 ?>">Next »</a>
+                <?php endif; ?>
+            </div>
+        <?php else: ?>
+            <p>No orders found for the selected filter or search criteria.</p>
+        <?php endif; ?>
+
+        <!-- QR and Payment Summary Section (only shown after clicking Generate QR) -->
+        <?php if ($show_qr_section): ?>
+            <div class="qr-section" id="qrSection">
+                <h2>Payment Summary for <?= htmlspecialchars($search) ?></h2>
+                <table>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Job Name</th>
+                        <th>Customer Name</th>
+                        <th>Description</th>
+                        <th>Total Charges</th>
+                        <th>Balance</th>
+                    </tr>
+                    <?php foreach ($job_sheets as $sheet): ?>
+                        <tr>
+                            <td><?= $sheet['id'] ?></td>
+                            <td><?= htmlspecialchars($sheet['job_name']) ?></td>
+                            <td><?= htmlspecialchars($sheet['customer_name']) ?></td>
+                            <td><?= htmlspecialchars($sheet['description']) ?></td>
+                            <td>₹<?= number_format($sheet['total_charges'], 2) ?></td>
+                            <td>₹<?= number_format($sheet['balance'], 2) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <tr>
+                        <td colspan="5"><strong>Total Balance</strong></td>
+                        <td><strong>₹<?= number_format($total_balance, 2) ?></strong></td>
+                    </tr>
+                </table>
+                <div class="payment-info">
+                    <p>Pay Total Balance (₹<?= number_format($total_balance, 2) ?>) via UPI: <?= htmlspecialchars($upi_id) ?></p>
+                </div>
+                <div class="qr-code">
+                    <img src="<?= htmlspecialchars($qr_path) ?>" alt="QR Code for Payment" onerror="this.style.display='none'; this.nextSibling.style.display='block';">
+                    <p style="display: none; color: red;">Failed to load QR code image.</p>
+                </div>
+                <div style="text-align: center;">
+                    <button class="print-page-btn" onclick="window.open('print_payment_summary.php?search=<?= urlencode($search) ?>&from_date=<?= urlencode($from_date) ?>&to_date=<?= urlencode($to_date) ?>', '_blank')">Print Payment Summary</button>
+                </div>
+            </div>
+        <?php endif; ?>
     </div>
+</div>
 </body>
 </html>

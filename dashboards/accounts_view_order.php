@@ -518,7 +518,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_payment'])) {
             dialog.style.display = 'none';
         <?php endif; ?>
 
-        document.getElementById('checkBtn').onclick = function() { showPaymentFields('check'); };
+        document.getElementById('checkBtn').onclick = function() { showPaymentFields('cheque'); };
         document.getElementById('onlineBtn').onclick = function() { showPaymentFields('online'); };
         document.getElementById('cashBtn').onclick = function() { showPaymentFields('cash'); };
         document.getElementById('phonepeBtn').onclick = function() { showPaymentFields('phonepe'); };
@@ -710,7 +710,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_payment'])) {
             <div class="dialog-overlay" id="paymentDialog">
                 <div class="dialog-box">
                     <h3>Select Payment Method</h3>
-                    <button id="checkBtn" class="check-btn">Check</button>
+                    <button id="checkBtn" class="check-btn">Cheque</button>
                     <button id="onlineBtn" class="online-btn">Online</button>
                     <button id="cashBtn" class="cash-btn">Cash</button>
                     <button id="phonepeBtn" class="phonepe-btn">PhonePe</button>

@@ -1,4 +1,5 @@
 <?php
+session_start(); // Add this to start the session
 include '../database/db_connect.php';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
@@ -6,7 +7,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $password = $_POST['password'];
     
     if ($username === "superadmin" && $password === "root") {
-        header("Location: ../dashboards/superadmin.php");
+        $_SESSION['username'] = $username;
+        $_SESSION['role'] = 'super_admin'; // Set role for consistency
+        header("Location: ../dashboards/super_admin_dashboard.php"); // Match expected filename
         exit();
     } else {
         $stmt = $conn->prepare("SELECT role, active FROM users WHERE username = ? AND password = ?");
